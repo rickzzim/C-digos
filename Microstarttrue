@@ -1,0 +1,104 @@
+// Microstart IR para robô de sumô - ESP32-C3 + receptor IR (VS1838 / TSOP)
+// Biblioteca: IRremote (Armin Joachimsmeyer) versão 4.x - instalar pelo Gerenciador de Bibliotecas
+//
+// Ligações:
+//   Receptor IR: VCC -> 3V3 | GND -> GND | OUT -> GPIO 1
+//   Saída do microstart -> GPIO 3  ==>  GPIO 13 do robô (PIN_MICROSTART)
+//   GND do microstart deve ser ligado ao GND do robô (referência comum)
+//
+// Controle:  tecla 1 = ARMAR | tecla 2 = COMBATE (largada) | tecla 3 = PARAR
+//
+// Lógica esperada pelo robô (nível contínuo, não pulso):
+//   saída LOW  -> robô em AGUARDANDO (motores parados)
+//   saída HIGH -> robô em NORMAL (luta)
+//   A saída só vai para HIGH na tecla 2 e fica em HIGH até a tecla 3.
+//
+// LED da placa: fica apagado e acende por 1 s a cada sinal IR válido recebido.
+
+#include <IRremote.hpp>
+
+const int PIN_IR     = 1;   // saída do receptor IR
+const int PIN_STATUS = 3;   // saída para o GPIO 13 do robô (HIGH = lutar)
+
+// ---- LED da placa ----
+// Ajuste conforme a sua placa:
+//   ESP32-C3 SuperMini: GPIO 8, aceso com LOW  (LED_ATIVO_BAIXO = true)
+//   Outras placas:      confira o pino; se acende com HIGH, use false
+const int  PIN_LED         = 8;
+const bool LED_ATIVO_BAIXO = true;
+const unsigned long TEMPO_LED_MS = 1000;  // tempo aceso após receber sinal
+
+unsigned long ledApagaEm = 0;
+bool ledAceso = false;
+
+void setLed(bool ligado) {
+  ledAceso = ligado;
+  digitalWrite(PIN_LED, (ligado != LED_ATIVO_BAIXO) ? HIGH : LOW);
+}
+
+// Comandos (NEC) das teclas 1, 2 e 3.
+// Se o seu controle for diferente, aperte as teclas com o Serial Monitor
+// aberto (115200) e copie o "Comando" que aparecer.
+const uint16_t CMD_ARMAR    = 0x00;  // tecla 1
+const uint16_t CMD_COMBATE  = 0x01;  // tecla 2
+const uint16_t CMD_PARAR    = 0x02;  // tecla 3
+
+enum Estado { DESLIGADO, ARMADO, COMBATE };
+Estado estado = DESLIGADO;
+
+void setSaida(bool lutar) {
+  digitalWrite(PIN_STATUS, lutar ? HIGH : LOW);
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PIN_STATUS, OUTPUT);
+  setSaida(false);  // sobe sempre em LOW: o robô não larga sozinho
+
+  pinMode(PIN_LED, OUTPUT);
+  setLed(false);    // LED começa apagado
+
+  IrReceiver.begin(PIN_IR, DISABLE_LED_FEEDBACK);
+  Serial.println("Microstart DESLIGADO - saida LOW");
+}
+
+void loop() {
+  if (IrReceiver.decode()) {
+    // sinal IR válido recebido: acende o LED por 1 s
+    if (IrReceiver.decodedIRData.protocol != UNKNOWN) {
+      setLed(true);
+      ledApagaEm = millis() + TEMPO_LED_MS;
+    }
+
+    // ignora repetição de tecla segurada e sinais inválidos
+    if (!(IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_REPEAT) &&
+        IrReceiver.decodedIRData.protocol != UNKNOWN) {
+
+      uint16_t cmd = IrReceiver.decodedIRData.command;
+      Serial.print("Comando: 0x");
+      Serial.println(cmd, HEX);
+
+      if (cmd == CMD_ARMAR && estado == DESLIGADO) {
+        estado = ARMADO;
+        setSaida(false);  // armado, mas ainda sem largar
+        Serial.println("ARMADO - saida LOW");
+      }
+      else if (cmd == CMD_COMBATE && estado == ARMADO) {
+        estado = COMBATE;
+        setSaida(true);   // HIGH contínuo: robô larga
+        Serial.println("COMBATE - saida HIGH");
+      }
+      else if (cmd == CMD_PARAR) {
+        estado = DESLIGADO;
+        setSaida(false);  // LOW: robô volta para AGUARDANDO
+        Serial.println("PARADO - saida LOW");
+      }
+    }
+    IrReceiver.resume();
+  }
+
+  // apaga o LED depois de 1 s (sem bloquear o loop)
+  if (ledAceso && (long)(millis() - ledApagaEm) >= 0) {
+    setLed(false);
+  }
+}
