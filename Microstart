@@ -1,0 +1,72 @@
+// Robô de sumô - ESP32-C3 + receptor IR (VS1838 / TSOP)
+// Biblioteca: IRremote (Armin Joachimsmeyer) versão 4.x - instalar pelo Gerenciador de Bibliotecas
+//
+// Ligações:
+//   Receptor IR: VCC -> 3V3 | GND -> GND | OUT -> GPIO 1
+//   Saída da ESP (resposta/status) -> GPIO 3
+//
+// Controle:  tecla 1 = LIGAR | tecla 2 = COMBATE | tecla 3 = DESLIGAR
+
+#include <IRremote.hpp>
+
+const int PIN_IR     = 1;   // saída do receptor IR
+const int PIN_STATUS = 3;   // saída da ESP (HIGH quando ligado)
+
+// Comandos (NEC) das teclas 1, 2 e 3.
+// Estes são os valores do controle comum de 21 teclas (kit Arduino).
+// Se o seu for diferente, aperte as teclas com o Serial Monitor aberto
+// (115200) e copie o "Comando" que aparecer.
+const uint16_t CMD_LIGAR    = 0x04;  // tecla 1
+const uint16_t CMD_COMBATE  = 0x05;  // tecla 2
+const uint16_t CMD_DESLIGAR = 0x06;  // tecla 3
+
+enum Estado { DESLIGADO, LIGADO, COMBATE };
+Estado estado = DESLIGADO;
+
+// ---- Coloque aqui o controle dos seus motores / sensores ----
+void motoresParar()   { /* TODO: parar motores */ }
+void iniciarCombate() { /* TODO: lógica de ataque (chamada em loop durante o combate) */ }
+// -------------------------------------------------------------
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PIN_STATUS, OUTPUT);
+  digitalWrite(PIN_STATUS, LOW);
+  motoresParar();
+  IrReceiver.begin(PIN_IR, DISABLE_LED_FEEDBACK);
+  Serial.println("Robo DESLIGADO - aguardando controle");
+}
+
+void loop() {
+  if (IrReceiver.decode()) {
+    // ignora repetição de tecla segurada e sinais inválidos
+    if (!(IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_REPEAT) &&
+        IrReceiver.decodedIRData.protocol != UNKNOWN) {
+
+      uint16_t cmd = IrReceiver.decodedIRData.command;
+      Serial.print("Comando: 0x");
+      Serial.println(cmd, HEX);
+
+      if (cmd == CMD_LIGAR && estado == DESLIGADO) {
+        estado = LIGADO;
+        digitalWrite(PIN_STATUS, HIGH);
+        Serial.println("Robo LIGADO");
+      }
+      else if (cmd == CMD_COMBATE && estado == LIGADO) {
+        estado = COMBATE;
+        Serial.println("COMBATE!");
+      }
+      else if (cmd == CMD_DESLIGAR) {
+        estado = DESLIGADO;
+        motoresParar();
+        digitalWrite(PIN_STATUS, LOW);
+        Serial.println("Robo DESLIGADO");
+      }
+    }
+    IrReceiver.resume();
+  }
+
+  if (estado == COMBATE) {
+    iniciarCombate();
+  }
+}
